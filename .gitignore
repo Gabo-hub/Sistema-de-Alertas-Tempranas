@@ -1,0 +1,29 @@
+# Common
+.DS_Store
+.vscode/
+.idea/
+*.log
+.env
+.env.local
+
+# Backend (Django)
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/env/
+backend/venv/
+backend/.env
+backend/db.sqlite3
+backend/staticfiles/
+backend/media/
+
+# Frontend (Vite/React)
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+frontend/stats.html
+
+# Documentation
+route_plan.md
