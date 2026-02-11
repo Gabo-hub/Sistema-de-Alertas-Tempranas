@@ -3,6 +3,7 @@ import 'leaflet/dist/leaflet.css'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, Circle, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { alertsApi, zonesApi } from '../services/api'
+import SubscribeForm from '../components/SubscribeForm'
 
 const userIcon = new L.DivIcon({
   html: `<div class="relative flex items-center justify-center">
@@ -36,11 +37,27 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c
 }
 
-function CenterView({ center, zoom }) {
+const MapController = ({ center, zoom, userPos, autoCenter, trigger }) => {
   const map = useMap()
+  const [hasAutoCentered, setHasAutoCentered] = useState(false)
+
   useEffect(() => {
-    if (center) map.setView(center, zoom ?? 8)
-  }, [map, center, zoom])
+    if (center && !hasAutoCentered) map.setView(center, zoom ?? 8)
+  }, [map, center, zoom, hasAutoCentered])
+
+  useEffect(() => {
+    if (userPos && autoCenter && !hasAutoCentered) {
+      map.flyTo(userPos, 13, { duration: 1.5 })
+      setHasAutoCentered(true)
+    }
+  }, [map, userPos, autoCenter, hasAutoCentered])
+
+  useEffect(() => {
+    if (trigger && userPos) {
+      map.flyTo(userPos, 15, { duration: 1 })
+    }
+  }, [trigger, userPos, map])
+
   return null
 }
 
@@ -52,6 +69,8 @@ export default function MapPage() {
 
   const [userPos, setUserPos] = useState(null)
   const [nearbyAlert, setNearbyAlert] = useState(null)
+  const [manualCenterTrigger, setManualCenterTrigger] = useState(0)
+  const [showProximityAlert, setShowProximityAlert] = useState(true)
 
   const defaultCenter = [10.2, -67.6]
   const defaultZoom = 8
@@ -69,15 +88,39 @@ export default function MapPage() {
     return () => { cancelled = true }
   }, [])
 
+  const [geoError, setGeoError] = useState(false)
+
   useEffect(() => {
     if ("geolocation" in navigator) {
-      navigator.geolocation.watchPosition(
-        (pos) => {
-          setUserPos([pos.coords.latitude, pos.coords.longitude])
-        },
-        (err) => console.warn("Geolocation error:", err),
-        { enableHighAccuracy: true }
-      )
+      const geoOptions = {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 60000
+      }
+
+      const handleSuccess = (pos) => {
+        console.log("Posición detectada:", pos.coords)
+        setUserPos([pos.coords.latitude, pos.coords.longitude])
+        setGeoError(false)
+      }
+
+      const handleError = (err) => {
+        console.warn("Error de geolocalización:", err.message)
+        if (!userPos) {
+          setUserPos([10.4806, -66.9036])
+          setGeoError(true)
+        }
+      }
+
+      navigator.geolocation.getCurrentPosition(handleSuccess, handleError, geoOptions)
+
+      const watchId = navigator.geolocation.watchPosition(handleSuccess, handleError, geoOptions)
+
+      return () => navigator.geolocation.clearWatch(watchId)
+    } else {
+      console.error("Geolocalización no soportada.")
+      setUserPos([10.4806, -66.9036])
+      setGeoError(true)
     }
   }, [])
 
@@ -105,52 +148,79 @@ export default function MapPage() {
     checkDanger()
   }, [checkDanger])
 
+  useEffect(() => {
+    if (nearbyAlert) setShowProximityAlert(true)
+  }, [nearbyAlert])
+
   if (loading) return (
     <div className="flex flex-col items-center justify-center min-h-[50vh]">
       <div className="w-10 h-10 border-[3px] border-slate-100 border-t-slate-900 rounded-full animate-spin"></div>
       <span className="mt-4 text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Cargando Cartografía</span>
     </div>
   )
-
   return (
-    <div className="relative h-[75vh] w-full rounded-[40px] overflow-hidden border border-slate-100 shadow-2xl shadow-slate-200/50">
-
-      {/* 4. BANNER DE ALERTA DE PELIGRO */}
-      {nearbyAlert && (
-        <div className="absolute top-4 left-4 right-4 md:left-1/2 md:-translate-x-1/2 md:w-full md:max-w-md z-[2000] animate-bounce">
-          <div className="bg-rose-600 text-white p-4 md:p-5 rounded-[24px] shadow-2xl shadow-rose-200 border border-white/20 backdrop-blur-md flex items-center gap-3 md:gap-4">
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-white/20 rounded-full flex items-center justify-center text-lg md:text-xl shrink-0">⚠️</div>
-            <div>
-              <p className="text-[8px] md:text-[10px] font-black uppercase tracking-widest opacity-80">Alerta de Proximidad</p>
-              <h3 className="text-xs md:text-sm font-bold leading-tight">Estás en una zona de riesgo por {nearbyAlert.tipo_desastre_display}</h3>
-              <p className="text-[9px] md:text-[10px] mt-1 font-medium italic opacity-90 hidden sm:block">Sigue los protocolos de seguridad de tu sector.</p>
+    <>
+      {nearbyAlert && showProximityAlert && (
+        <div className="fixed bottom-4 right-4 z-2000 pointer-events-auto">
+          <div className="bg-rose-600 text-white p-3 rounded-lg shadow-2xl shadow-rose-200 border border-white/20 backdrop-blur-md flex items-center gap-3">
+            <div className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center text-lg shrink-0">⚠️</div>
+            <div className="flex-1">
+              <p className="text-[8px] md:text-[10px] font-black uppercase tracking-widest opacity-90">Alerta de Proximidad</p>
+              <h3 className="text-xs md:text-sm font-bold leading-tight truncate">Estás en una zona de riesgo: {nearbyAlert.tipo_desastre_display}</h3>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <button onClick={() => setShowProximityAlert(false)} aria-label="Cerrar alerta" className="text-white/90 hover:text-white text-sm">✕</button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="absolute bottom-6 left-4 right-4 md:top-6 md:left-6 md:bottom-auto md:right-auto z-[30] md:max-w-sm pointer-events-none">
-        <div className="glass-panel p-4 md:p-6 rounded-[24px] md:rounded-[32px] shadow-xl shadow-black/5 animate-in fade-in slide-in-from-bottom-4 md:slide-in-from-top-4 duration-700 pointer-events-auto bg-white/80 backdrop-blur-md">
-          <h1 className="text-xl font-black text-slate-900 tracking-tight">Mapa de Riesgos</h1>
-          <p className="mt-2 text-xs font-semibold text-slate-500 leading-relaxed uppercase tracking-wider">
+      <div className="relative h-[75vh] w-full rounded-[40px] overflow-hidden border border-slate-100 shadow-2xl shadow-slate-200/50">
+
+      <div className="absolute bottom-6 left-4 right-4 md:top-6 md:left-6 md:bottom-auto md:right-auto z-30 md:max-w-sm pointer-events-none">
+        <div className="glass-panel p-2 md:p-6 rounded-2xl md:rounded-4xl shadow-xl shadow-black/5 animate-in fade-in slide-in-from-bottom-4 md:slide-in-from-top-4 duration-700 pointer-events-auto bg-white/80 backdrop-blur-md">
+          <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Mapa de Riesgos</h1>
+          <p className="mt-2 text-xs font-semibold text-slate-500 leading-relaxed uppercase tracking-wider hidden sm:block">
             Monitoreo geolocalizado de protocolos activos
           </p>
-          <div className="mt-6 flex flex-wrap items-center gap-4">
+          <div className="mt-4 md:mt-6 flex flex-wrap items-center gap-3 md:gap-4">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-blue-500 shadow-sm shadow-blue-200"></div>
-              <span className="text-[10px] font-black uppercase text-slate-400">Zonas</span>
+              <span className="text-[9px] md:text-[10px] font-black uppercase text-slate-400">Zonas</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-slate-900 shadow-sm shadow-slate-200"></div>
-              <span className="text-[10px] font-black uppercase text-slate-400">Eventos</span>
+              <span className="text-[9px] md:text-[10px] font-black uppercase text-slate-400">Eventos</span>
             </div>
             {userPos && (
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-blue-600 shadow-sm shadow-blue-200"></div>
-                <span className="text-[10px] font-black uppercase text-slate-400">Tu Ubicación</span>
+              <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setManualCenterTrigger(Date.now())}>
+                <div className={`w-2 h-2 rounded-full shadow-sm ${geoError ? 'bg-amber-500 shadow-amber-200' : 'bg-blue-600 shadow-blue-200'}`}></div>
+                <span className="text-[9px] md:text-[10px] font-black uppercase text-slate-400">
+                  Tu Ubicación {geoError ? '(Aproximada)' : ''}
+                </span>
               </div>
             )}
           </div>
+
+          {/* Mensaje si la geolocalización falló */}
+          {geoError && (
+            <p className="mt-3 text-[9px] text-amber-600 font-medium bg-amber-50 p-2 rounded-lg">
+              ⚠️ No se pudo obtener tu ubicación real. Se está mostrando una ubicación por defecto (Caracas).
+            </p>
+          )}
+
+          {/* BOTÓN CENTRAR EN MÍ */}
+          {userPos && (
+            <button
+              onClick={() => setManualCenterTrigger(Date.now())}
+              className="mt-3 md:mt-4 w-full py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition"
+            >
+              📍 Centrar en mi ubicación
+            </button>
+          )}
+
+          {/* Suscripción movida abajo (ver sección fuera del mapa) */}
+
         </div>
       </div>
 
@@ -173,7 +243,14 @@ export default function MapPage() {
           </Marker>
         )}
 
-        <CenterView center={defaultCenter} zoom={defaultZoom} />
+        <MapController
+          center={defaultCenter}
+          zoom={defaultZoom}
+          userPos={userPos}
+          autoCenter={true}
+          trigger={manualCenterTrigger}
+        />
+
 
         {zones.map((z) => {
           if (!z.geometry_geojson) return null
@@ -222,7 +299,7 @@ export default function MapPage() {
             <div key={`alert-group-${a.id}`}>
               <Marker position={[lat, lon]}>
                 <Popup>
-                  <div className="p-2 min-w-[200px]">
+                  <div className="p-2 min-w-50">
                     <div className="flex items-center gap-2 mb-2">
                       <div className={`w-2 h-2 rounded-full ${a.nivel_riesgo === 'CRITICO' ? 'bg-rose-500' : 'bg-slate-900'}`}></div>
                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -259,5 +336,20 @@ export default function MapPage() {
         })}
       </MapContainer>
     </div>
+      {/* Sección de suscripción debajo del mapa - diseño consistente con la página */}
+      <div className="mt-8 w-full max-w-3xl mx-auto">
+        <div className="glass-panel p-6 rounded-2xl shadow-xl shadow-black/5 bg-white/90 backdrop-blur-md border border-slate-100">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-black text-slate-900">Recibe alertas por correo</h3>
+              <p className="mt-1 text-sm text-slate-500">Suscríbete y recibe notificaciones cuando haya alertas en tu zona.</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <SubscribeForm />
+          </div>
+        </div>
+      </div>
+    </>
   )
 }

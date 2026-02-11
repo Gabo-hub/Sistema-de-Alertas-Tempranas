@@ -55,10 +55,35 @@ export default function AdminAlertList() {
           >
             + Crear Evento
           </Link>
+          <label className="cursor-pointer px-6 py-3 bg-white text-slate-900 border border-slate-200 rounded-xl text-xs font-black uppercase tracking-[0.15em] hover:bg-slate-50 transition-bezier shadow-sm">
+            Importar XLS
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files[0]
+                if (!file) return
+                const formData = new FormData()
+                formData.append('file', file)
+                try {
+                  setLoading(true)
+                  const res = await alertsApi.import(formData)
+                  alert(res.message || 'Importación completada')
+                  load()
+                } catch (err) {
+                  setError(err.message || 'Error importando archivo')
+                } finally {
+                  setLoading(false)
+                  e.target.value = ''
+                }
+              }}
+            />
+          </label>
           <a
             href={exportUrl}
             download
-            className="px-6 py-3 bg-white text-slate-900 border border-slate-200 rounded-xl text-xs font-black uppercase tracking-[0.15em] hover:bg-slate-50 transition-bezier"
+            className="px-6 py-3 bg-white text-slate-900 border border-slate-200 rounded-xl text-xs font-black uppercase tracking-[0.15em] hover:bg-slate-50 transition-bezier shadow-sm"
           >
             Exportar XLS
           </a>

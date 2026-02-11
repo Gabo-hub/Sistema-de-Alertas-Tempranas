@@ -14,7 +14,6 @@ export default function AdminZoneForm() {
         geometry_json: null
     })
 
-    // Campo de texto temporal para el GeoJSON
     const [jsonString, setJsonString] = useState('')
 
     useEffect(() => {
@@ -41,7 +40,6 @@ export default function AdminZoneForm() {
             if (jsonString.trim()) {
                 const parsed = JSON.parse(jsonString)
 
-                // Función auxiliar para extraer el polígono
                 const extractPolygon = (obj) => {
                     if (obj.type === 'Polygon') return obj
                     if (obj.type === 'Feature') return extractPolygon(obj.geometry)

@@ -1,7 +1,7 @@
 
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE_URL = import.meta.env.VITE_API_URL || 'https://07z6nn8z-8000.use2.devtunnels.ms'
 
 const api = axios.create({
   baseURL: BASE_URL + '/api/',
@@ -10,7 +10,7 @@ const api = axios.create({
   },
 })
 
-// Interceptar peticiones para añadir token
+
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token')
@@ -22,7 +22,7 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
-// Ayudante para uso consistente de respuestas
+
 const responseBody = (response) => response.data
 
 export const alertsApi = {
@@ -34,7 +34,10 @@ export const alertsApi = {
   exportUrl: (params) => {
     const q = new URLSearchParams(params).toString()
     return `${BASE_URL}/api/alerts/export/${q ? `?${q}` : ''}`
-  }
+  },
+  import: (formData) => api.post('alerts/import/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }).then(responseBody)
 }
 
 export const zonesApi = {

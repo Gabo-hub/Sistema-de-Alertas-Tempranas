@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import MultiPartParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.http import HttpResponse
 from django.db.models import Count
@@ -19,8 +20,100 @@ import requests
 import json
 
 from .models import Alert, Zone, NotificationLog
-from .serializers import AlertSerializer, ZoneSerializer
+from .serializers import AlertSerializer, ZoneSerializer, SubscriberSerializer
+from .models import Subscriber
 from .filters import AlertFilter
+from django.conf import settings
+from mailersend import MailerSendClient, EmailBuilder
+import smtplib
+from email.message import EmailMessage
+import os
+
+def _send_alert_email(alert, recipient_email):
+    """Envía un correo real usando MailerSend."""
+    api_key = getattr(settings, 'MAILERSEND_API_KEY', None)
+    sender_email = getattr(settings, 'MAILERSEND_SENDER', 'info@trial-z3m5yelyy9oldpyo.mlsender.net')
+    
+    if not api_key:
+        return False
+    subject = f"⚠️ ALERTA: {alert.get_tipo_desastre_display()} - {alert.get_nivel_riesgo_display()}"
+
+    html_content = f"""
+    <div style="font-family: sans-serif; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
+        <h2 style="color: #e11d48;">Aviso de Emergencia</h2>
+        <p>Se ha detectado un evento de <strong>{alert.get_tipo_desastre_display()}</strong> en su zona.</p>
+        <p><strong>Nivel de Riesgo:</strong> {alert.get_nivel_riesgo_display()}</p>
+        <p><strong>Descripción:</strong> {alert.descripcion or 'Sin descripción disponible'}</p>
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="font-size: 12px; color: #666;">Por favor, siga los protocolos de defensa civil y manténgase a resguardo.</p>
+    </div>
+    """
+
+    text_content = f"ALERTA: {alert.get_tipo_desastre_display()} - {alert.get_nivel_riesgo_display()}\n\n{alert.descripcion or ''}"
+
+    # Support simulation mode
+    try:
+        if getattr(settings, 'MAILERSEND_SIMULATE', False):
+            # Simulate sending
+            info = {
+                'ok': True,
+                'provider': 'simulate',
+                'provider_id': None,
+                'response': 'simulated'
+            }
+            return info
+
+        ms = MailerSendClient(api_key)
+        email = (
+            EmailBuilder()
+            .from_email(sender_email, "SAT - Alerta Temprana")
+            .to_many([{"email": recipient_email, "name": "Usuario de Riesgo"}])
+            .subject(subject)
+            .html(html_content)
+            .text(text_content)
+            .build()
+        )
+        resp = ms.emails.send(email)
+        # Try to extract an id if present
+        provider_id = None
+        try:
+            if isinstance(resp, dict):
+                provider_id = resp.get('data') or resp.get('message_id') or resp.get('id')
+        except Exception:
+            provider_id = None
+
+        return {'ok': True, 'provider': 'mailersend_api', 'provider_id': provider_id, 'response': str(resp)}
+    except Exception as e:
+        err_str = str(e)
+        print(f"Error enviando correo via API MailerSend: {err_str}")
+
+        # Fallback: intentar envío por SMTP si hay credenciales en env
+        smtp_host = os.environ.get('SMTP_HOST')
+        smtp_port = int(os.environ.get('SMTP_PORT', '587')) if os.environ.get('SMTP_PORT') else None
+        smtp_user = os.environ.get('SMTP_USER')
+        smtp_password = os.environ.get('SMTP_PASSWORD')
+
+        if smtp_host and smtp_user and smtp_password:
+            try:
+                msg = EmailMessage()
+                msg['Subject'] = subject
+                msg['From'] = sender_email
+                msg['To'] = recipient_email
+                msg.set_content(text_content)
+                msg.add_alternative(html_content, subtype='html')
+
+                # Conexión TLS
+                smtp_port = smtp_port or 587
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_password)
+                    server.send_message(msg)
+                return {'ok': True, 'provider': 'smtp', 'provider_id': None, 'response': 'smtp_ok'}
+            except Exception as se:
+                print(f"Error enviando correo via SMTP fallback: {se}")
+                return {'ok': False, 'provider': 'smtp', 'provider_id': None, 'response': str(se)}
+
+        return {'ok': False, 'provider': 'mailersend_api', 'provider_id': None, 'response': err_str}
 
 
 def _lat_lon_from_request(data):
@@ -164,6 +257,38 @@ class ZoneViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
 
+class SubscriberViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar suscriptores globales.
+
+    - `create` está abierto (AllowAny) para que el frontend publique el formulario.
+    - `list`/`retrieve`/`destroy` requieren autenticación (admin).
+    """
+    queryset = Subscriber.objects.all()
+    serializer_class = SubscriberSerializer
+
+    def get_permissions(self):
+        if self.action in ('create',):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+    def unsubscribe(self, request):
+        """Desactiva la suscripción por email.
+
+        Body JSON: { "email": "user@example.com" }
+        """
+        email = request.data.get('email')
+        if not email:
+            return Response({'error': 'email requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            sub = Subscriber.objects.get(email__iexact=email)
+            sub.active = False
+            sub.save(update_fields=['active'])
+            return Response({'message': 'suscripción desactivada'})
+        except Subscriber.DoesNotExist:
+            return Response({'error': 'suscriptor no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+
 class AlertExportView(APIView):
     """Exportar alertas a Excel (.xlsx). Público."""
     permission_classes = [AllowAny]
@@ -216,7 +341,7 @@ class StatisticsView(APIView):
 
     def get(self, request):
         base_qs = Alert.objects.all()
-        # Filtro opcional por rango de fechas
+
         desde = request.query_params.get('desde')
         hasta = request.query_params.get('hasta')
         if desde:
@@ -232,7 +357,7 @@ class StatisticsView(APIView):
             .annotate(total=Count('id'))
             .order_by('-total')[:10]
         )
-        # Tendencias: últimos 30 días por día
+
         hace_30 = timezone.now() - timedelta(days=30)
         tendencia = list(
             base_qs.filter(fecha_hora__gte=hace_30)
@@ -275,13 +400,15 @@ class WeatherProxyView(APIView):
             return Response({'error': 'Parámetros lat y lon requeridos'}, status=status.HTTP_400_BAD_REQUEST)
         if not api_key:
             return Response({'error': 'OPENWEATHERMAP_API_KEY no configurada'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Usar API 2.5 Standard (Más compatible con keys gratuitas estándar)
         url = f'https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=es'
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=5)
             r.raise_for_status()
             return Response(r.json())
         except requests.RequestException as e:
-            return Response({'error': str(e)}, status=status.HTTP_525_BAD_GATEWAY)
+            return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 class SimulateNotificationsView(APIView):
@@ -291,13 +418,134 @@ class SimulateNotificationsView(APIView):
     def post(self, request):
         alertas = Alert.objects.filter(activa=True).select_related('zona')
         created = []
+
+        # Recolectar suscriptores activos (suscripción global)
+        subscribers = list(Subscriber.objects.filter(active=True).values('email', 'name'))
+
+        # Si se pasó un email en el request, también lo incluimos (pero no duplicar)
+        request_email = request.data.get('email')
+
+        # Construir la lista de destinatarios (deduplicada)
+        recipients = []
+        for s in subscribers:
+            recipients.append(s['email'])
+        if request_email:
+            recipients.append(request_email)
+        # Deduplicar manteniendo orden
+        seen = set()
+        recipients = [r for r in recipients if not (r in seen or seen.add(r))]
+
+        if not recipients:
+            # Fallback a un correo de ejemplo si no hay suscriptores ni email
+            recipients = ['tu_correo@ejemplo.com']
+
         for alert in alertas:
             zona_nombre = alert.zona.nombre if alert.zona else 'Sin zona'
-            log = NotificationLog.objects.create(
-                alert=alert,
-                email_simulado=f"usuario_zona_{alert.id}@simulado.local",
-                zona_nombre=zona_nombre,
-                enviado_simulado=True,
-            )
-            created.append({'alert_id': alert.id, 'log_id': log.id, 'zona': zona_nombre})
-        return Response({'message': 'Simulación completada', 'notificaciones_registradas': len(created), 'detalle': created})
+
+            for recipient in recipients:
+                enviado = _send_alert_email(alert, recipient)
+
+                # Normalize result: puede ser bool (antiguo) o dict (nuevo)
+                if isinstance(enviado, dict):
+                    ok = bool(enviado.get('ok'))
+                    provider = enviado.get('provider')
+                    provider_id = enviado.get('provider_id')
+                    provider_response = enviado.get('response')
+                else:
+                    ok = bool(enviado)
+                    provider = None
+                    provider_id = None
+                    provider_response = str(enviado)
+
+                log = NotificationLog.objects.create(
+                    alert=alert,
+                    email_simulado=recipient,
+                    zona_nombre=zona_nombre,
+                    enviado_simulado=ok,
+                    provider=provider or '',
+                    provider_id=provider_id or '',
+                    provider_response=provider_response or ''
+                )
+                created.append({
+                    'alert_id': alert.id,
+                    'log_id': log.id,
+                    'zona': zona_nombre,
+                    'email': recipient,
+                    'estado_envio': 'Exitoso' if ok else f'Fallido ({provider or "error"})'
+                })
+
+        return Response({
+            'message': 'Proceso de notificación finalizado',
+            'detalles': created
+        })
+
+
+class AlertImportView(APIView):
+    """Importar alertas desde archivo Excel (.xlsx). Autenticado (Admin)."""
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        file = request.FILES.get('file')
+        if not file:
+             return Response({'error': 'No se proporcionó ningún archivo'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            import pandas as pd
+            df = pd.read_excel(file)
+            
+            # Validar columnas mínimas
+            required_cols = ['Tipo', 'Nivel', 'Descripcion', 'Latitud', 'Longitud']
+            if not all(col in df.columns for col in required_cols):
+                return Response(
+                    {'error': f'Formato inválido. Columnas requeridas: {", ".join(required_cols)}'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            created_count = 0
+            errors = []
+            
+            # Mapeo de valores de display a claves del modelo (ej "INUNDACION" -> "INUNDACION")
+            # Asumimos que el Excel trae las claves en mayúsculas (INUNDACION, INCENDIO, etc.) o display
+            # Para simplificar, intentaremos mapear exacto o default a OTROS
+            
+            for index, row in df.iterrows():
+                try:
+                    # Parsear datos básicos
+                    tipo = str(row['Tipo']).upper()
+                    nivel = str(row['Nivel']).upper()
+                    
+                    # Validar opciones (simplificado)
+                    valid_types = [c[0] for c in Alert.TIPO_DESASTRE_CHOICES]
+                    if tipo not in valid_types:
+                        tipo = 'OTROS'
+                        
+                    valid_levels = [c[0] for c in Alert.NIVEL_RIESGO_CHOICES]
+                    if nivel not in valid_levels:
+                        nivel = 'BAJO'
+
+                    Alert.objects.create(
+                        tipo_desastre=tipo,
+                        nivel_riesgo=nivel,
+                        descripcion=row['Descripcion'],
+                        latitude=float(row['Latitud']),
+                        longitude=float(row['Longitud']),
+                        radio_impacto=float(row.get('Radio', 1000)), # Default 1km
+                        activa=True, # Por defecto activas al importar
+                        # Zona opcional: para hacerlo robusto habría que buscar la zona por nombre o coordenadas
+                        # Por ahora dejamos zona en null o buscamos por intersección automática si existiera esa lógica
+                    )
+                    created_count += 1
+                except Exception as e:
+                    errors.append(f"Fila {index + 2}: {str(e)}")
+            
+            return Response({
+                'message': f'Proceso completado. {created_count} alertas creadas.',
+                'created': created_count, 
+                'errors': errors
+            })
+            
+        except ImportError:
+            return Response({'error': 'Librería pandas no instalada en el servidor'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as e:
+             return Response({'error': f'Error procesando archivo: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)

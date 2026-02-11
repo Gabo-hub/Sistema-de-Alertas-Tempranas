@@ -68,6 +68,9 @@ class NotificationLog(models.Model):
     email_simulado = models.CharField(max_length=255, blank=True)
     zona_nombre = models.CharField(max_length=200, blank=True)
     enviado_simulado = models.BooleanField(default=True)
+    provider = models.CharField(max_length=50, blank=True, help_text='Proveedor usado para el envío (mailersend_api, smtp, simulate)')
+    provider_id = models.CharField(max_length=255, blank=True, help_text='ID de mensaje devuelto por el proveedor')
+    provider_response = models.TextField(blank=True, help_text='Respuesta cruda del proveedor (JSON o texto)')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -77,3 +80,22 @@ class NotificationLog(models.Model):
 
     def __str__(self):
         return f"Notif. alerta {self.alert_id} - {self.created_at}"
+
+
+class Subscriber(models.Model):
+    """Suscriptor global para recibir notificaciones por correo.
+
+    Suscripción global (no ligada a zona) tal como pidió el cliente.
+    """
+    email = models.EmailField(unique=True)
+    name = models.CharField(max_length=200, blank=True)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Suscriptor'
+        verbose_name_plural = 'Suscriptores'
+
+    def __str__(self):
+        return f"{self.email} ({'activo' if self.active else 'inactivo'})"

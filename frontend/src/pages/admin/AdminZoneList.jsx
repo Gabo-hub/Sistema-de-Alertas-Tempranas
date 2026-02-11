@@ -82,12 +82,12 @@ export default function AdminZoneList() {
                             </div>
                         </div>
 
-                        <h3 className="text-xl font-bold text-slate-900 mb-2 truncate group-hover:text-white transition-colors">{zone.nombre}</h3>
+                        <h3 className="text-xl font-bold text-slate-900 mb-2 truncate group-hover:text-gray-400 transition-colors">{zone.nombre}</h3>
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 group-hover:text-slate-500 transition-colors">ID: {zone.codigo || zone.id}</p>
 
                         <div className="flex items-center gap-2 pt-6 border-t border-slate-50 group-hover:border-white/10 transition-colors">
                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Vértices Geométricos:</span>
-                            <span className="text-[9px] font-black text-slate-900 group-hover:text-white">
+                            <span className="text-[9px] font-black text-slate-900 group-hover:text-gray-400">
                                 {zone.geometry_geojson?.coordinates?.[0]?.length || 0} PUNTOS
                             </span>
                         </div>

@@ -5,3 +5,10 @@ class AlertsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'alerts'
     verbose_name = 'Alertas Tempranas'
+    
+    def ready(self):
+        # Import signals to ensure they are connected
+        try:
+            import alerts.signals  # noqa: F401
+        except Exception:
+            pass

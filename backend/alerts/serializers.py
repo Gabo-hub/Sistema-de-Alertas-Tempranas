@@ -4,6 +4,7 @@ GeoJSON construido desde lat/lon y JSON (sin GDAL/GEOS).
 """
 from rest_framework import serializers
 from .models import Alert, Zone
+from .models import Subscriber
 
 
 class ZoneSerializer(serializers.ModelSerializer):
@@ -19,6 +20,21 @@ class ZoneSerializer(serializers.ModelSerializer):
 
     def get_geometry_geojson(self, obj):
         return obj.geometry_json
+
+class SubscriberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subscriber
+        fields = ['id', 'email', 'name', 'active', 'created_at']
+        read_only_fields = ['id', 'active', 'created_at']
+
+    def create(self, validated_data):
+        # Crear o reactivar suscriptor por email
+        email = validated_data.get('email')
+        obj, created = Subscriber.objects.update_or_create(
+            email=email,
+            defaults={'name': validated_data.get('name', ''), 'active': True}
+        )
+        return obj
 
 
 class AlertSerializer(serializers.ModelSerializer):
